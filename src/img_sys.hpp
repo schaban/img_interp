@@ -37,8 +37,22 @@ union RGBA {
 		this->a = a;
 	}
 
+	void scl(float s) {
+		for (int i = 0; i < 4; ++i) {
+			ch[i] *= s;
+		}
+	}
+
 	float luma() const {
 		return r*0.299f + g*0.587f + b*0.114f;
+	}
+
+	float luminance() const {
+		return r*0.212671f + g*0.71516f + b*0.072169f;
+	}
+
+	float average() const {
+		return (r + g + b) / 3.0f;
 	}
 };
 
@@ -109,11 +123,15 @@ double time_micros();
 
 void* mem_alloc(int64_t size, const char* pTag = "Temp");
 void mem_free(void* pMem);
+template<typename T> inline T* type_alloc(int n, const char* pTag = "Temp") { return reinterpret_cast<T*>(mem_alloc(n * sizeof(T), pTag)); }
 
 FILE* file_open(const char* pPath, const char* mode);
 void file_close(FILE* pFile);
 
+#define D_IMG_LIN false
+
 IMAGE* img_alloc(int w, int h);
-IMAGE* img_load_png(const char* pPath, float gamma = 2.2f);
-IMAGE* img_load_jpg(const char* pPath, float gamma = 2.2f);
-void img_save_png(const char* pPath, const IMAGE* pImg, float gamma = 1.0f);
+IMAGE* img_load_png(const char* pPath, bool linearize = D_IMG_LIN);
+IMAGE* img_load_jpg(const char* pPath, bool linearize = D_IMG_LIN);
+void img_save_png(const char* pPath, const IMAGE* pImg, bool linear = D_IMG_LIN);
+

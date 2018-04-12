@@ -41,7 +41,7 @@ void con_text_color(const RGBA& clr) {
 	::SetConsoleTextAttribute(hstd, attr);
 }
 
-static IMAGE* img_load(const char* pPath, const IID& decoderClsId, float gamma) {
+static IMAGE* img_load(const char* pPath, const IID& decoderClsId, bool linearize) {
 	::CoInitialize(nullptr);
 	IMAGE* pImg = nullptr;
 	IStream* pStrm = nullptr;
@@ -56,7 +56,7 @@ static IMAGE* img_load(const char* pPath, const IID& decoderClsId, float gamma) 
 				hres = pDec->GetFrame(0, &pFrm);
 				if (SUCCEEDED(hres)) {
 					IWICBitmapSource* pBmp = nullptr;
-					hres = ::WICConvertBitmapSource(GUID_WICPixelFormat128bppRGBAFloat, pFrm, &pBmp);
+					hres = ::WICConvertBitmapSource(GUID_WICPixelFormat32bppRGBA, pFrm, &pBmp);
 					if (SUCCEEDED(hres)) {
 						UINT w = 0;
 						UINT h = 0;
@@ -64,24 +64,33 @@ static IMAGE* img_load(const char* pPath, const IID& decoderClsId, float gamma) 
 						if (SUCCEEDED(hres)) {
 							pImg = img_alloc(int(w), int(h));
 							if (pImg) {
-								RGBA* pClr = pImg->mPixels;
-								WICRect rect;
-								rect.X = 0;
-								rect.Y = 0;
-								rect.Width = w;
-								rect.Height = h;
-								UINT stride = UINT(w * sizeof(RGBA));
-								hres = pBmp->CopyPixels(&rect, stride, (UINT)pImg->calc_data_size(), (BYTE*)pClr);
-								if (SUCCEEDED(hres)) {
-									if (gamma > 0.0f && gamma != 1.0f) {
-										float pwr = 1.0f / gamma;
+								VAL32* pTmpPix = type_alloc<VAL32>(w*h);
+								if (pTmpPix) {
+									WICRect rect;
+									rect.X = 0;
+									rect.Y = 0;
+									rect.Width = w;
+									rect.Height = h;
+									UINT stride = UINT(w * sizeof(VAL32));
+									hres = pBmp->CopyPixels(&rect, stride, (UINT)pImg->calc_data_size(), (BYTE*)pTmpPix);
+									if (SUCCEEDED(hres)) {
+										RGBA* pClr = pImg->mPixels;
 										for (UINT i = 0; i < w*h; ++i) {
-											RGBA* pWk = &pClr[i];
-											for (int j = 0; j < 4; ++j) {
-												pWk->ch[j] = ::powf(pWk->ch[j], pwr);
+											pClr[i].set(float(pTmpPix[i].b[0]), float(pTmpPix[i].b[1]), float(pTmpPix[i].b[2]), float(pTmpPix[i].b[3]));
+										}
+										for (UINT i = 0; i < w*h; ++i) {
+											pClr[i].scl(1.0f / 255);
+										}
+										if (linearize) {
+											for (UINT i = 0; i < w*h; ++i) {
+												RGBA* pWk = &pClr[i];
+												for (int j = 0; j < 4; ++j) {
+													pWk->ch[j] = ::powf(pWk->ch[j], 2.2f);
+												}
 											}
 										}
 									}
+									mem_free(pTmpPix);
 								}
 							}
 						}
@@ -102,15 +111,15 @@ static IMAGE* img_load(const char* pPath, const IID& decoderClsId, float gamma) 
 	return pImg;
 }
 
-IMAGE* img_load_png(const char* pPath, float gamma) {
-	return img_load(pPath, CLSID_WICPngDecoder, gamma);
+IMAGE* img_load_png(const char* pPath, bool linearize) {
+	return img_load(pPath, CLSID_WICPngDecoder, linearize);
 }
 
-IMAGE* img_load_jpg(const char* pPath, float gamma) {
-	return img_load(pPath, CLSID_WICJpegDecoder, gamma);
+IMAGE* img_load_jpg(const char* pPath, bool linearize) {
+	return img_load(pPath, CLSID_WICJpegDecoder, linearize);
 }
 
-static void img_save(const char* pPath, const IMAGE* pImg, const IID& encoderClsId, float gamma) {
+static void img_save(const char* pPath, const IMAGE* pImg, const IID& encoderClsId, bool linear) {
 	if (!pPath || !pImg) return;
 	::CoInitialize(nullptr);
 	IStream* pStrm = nullptr;
@@ -136,13 +145,12 @@ static void img_save(const char* pPath, const IMAGE* pImg, const IID& encoderCls
 							uint32_t size = w*h * sizeof(uint32_t);
 							uint32_t* pDst = (uint32_t*)mem_alloc(size);
 							if (pDst) {
-								float pwr = gamma > 0.0f ? 1.0f / gamma : 1.0f;
 								for (UINT i = 0; i < w*h; ++i) {
 									RGBA csrc = pSrc[i];
 									VAL32 cdst;
-									if (pwr != 1.0f) {
+									if (linear) {
 										for (int i = 0; i < 4; ++i) {
-											csrc.ch[i] = ::powf(csrc.ch[i], pwr);
+											csrc.ch[i] = ::powf(csrc.ch[i], 1.0f / 2.2f);
 										}
 									}
 									for (int i = 0; i < 4; ++i) {
@@ -177,6 +185,6 @@ static void img_save(const char* pPath, const IMAGE* pImg, const IID& encoderCls
 	::CoUninitialize();
 }
 
-void img_save_png(const char* pPath, const IMAGE* pImg, float gamma) {
-	img_save(pPath, pImg, CLSID_WICPngEncoder, gamma);
+void img_save_png(const char* pPath, const IMAGE* pImg, bool linear) {
+	img_save(pPath, pImg, CLSID_WICPngEncoder, linear);
 }

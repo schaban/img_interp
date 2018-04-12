@@ -1,3 +1,4 @@
+// Image interpolation from scattered samples
 // Author: Sergey Chaban <sergey.chaban@gmail.com>
 
 #include "img_sys.hpp"
@@ -109,6 +110,224 @@ void lu_solve(T* pAns, const T* pLU, const T* pRHS, const int* pIdx, int N) {
 	}
 }
 
+template<typename T>
+inline
+bool symm_ldlt_decomp(T* pMtx, int N, T* pDet /* [N] */, int* pIdx /* [N] */) {
+	const T zthr = T(1.0e-16);
+	const T aprm = T(1 + ::sqrt(17.0)) / 8;
+	int eposi = 0;
+	int enega = 0;
+	pIdx[N - 1] = N - 1;
+	int i = 0;
+	while (i < N - 1) {
+		int ri = i * N;
+		int i1 = i + 1;
+		int i2 = i + 2;
+		T aii = pMtx[ri + i];
+		if (aii < 0) aii = -aii;
+		pIdx[i] = i;
+		T lambda = pMtx[ri + i1];
+		int j = i1;
+		for (int k = i2; k < N; ++k) {
+			T aik = pMtx[ri + k];
+			if (aik < 0) aik = -aik;
+			if (aik > lambda) {
+				j = k;
+				lambda = aik;
+			}
+		}
+		int rj = j * N;
+		bool flg = true;
+		if (aii < aprm*lambda) {
+			T sigma = lambda;
+			for (int k = i1; k < j; ++k) {
+				T akj = pMtx[k*N + j];
+				if (akj < 0) akj = -akj;
+				if (akj > sigma) sigma = akj;
+			}
+			for (int k = j + 1; k < N; ++k) {
+				T ajk = pMtx[rj + k];
+				if (ajk < 0) ajk = -ajk;
+				if (ajk > sigma) sigma = ajk;
+			}
+			if (aii*sigma < lambda) {
+				T ajj = pMtx[rj + j];
+				if (ajj < 0) ajj = -ajj;
+				if (ajj > aprm*sigma) {
+					for (int k = j + 1; k < N; ++k) {
+						T t = pMtx[rj + k];
+						pMtx[rj + k] = pMtx[ri + k];
+						pMtx[ri + k] = t;
+					}
+					for (int k = i1; k < j; ++k) {
+						int rk = k*N;
+						T t = pMtx[ri + k];
+						pMtx[ri + k] = pMtx[rk + j];
+						pMtx[rk + j] = t;
+					}
+					T t = pMtx[ri + i];
+					pMtx[ri + i] = pMtx[rj + j];
+					pMtx[rj + j] = t;
+					pIdx[i] = j;
+				} else {
+					int ri1 = i1*N;
+					if (j > i1) {
+						for (int k = j + 1; k < N; ++k) {
+							T t = pMtx[rj + k];
+							pMtx[rj + k] = pMtx[ri1 + k];
+							pMtx[ri1 + k] = t;
+						}
+						for (int k = i2; k < j; ++k) {
+							int rk = k*N;
+							T t = pMtx[ri1 + k];
+							pMtx[ri1 + k] = pMtx[rk + j];
+							pMtx[rk + j] = t;
+						}
+						T t = pMtx[ri + i];
+						pMtx[ri + i] = pMtx[rj + j];
+						pMtx[rj + j] = t;
+						t = pMtx[ri + j];
+						pMtx[ri + j] = pMtx[ri + i1];
+						pMtx[ri + i1] = t;
+					}
+					T t = pMtx[ri + i1];
+					T det = pMtx[ri + i]*pMtx[ri1 + i1] - t*t;
+					T idet = T(1) / det;
+					aii = pMtx[ri + i] * idet;
+					T aii1 = pMtx[ri + i1] * idet;
+					T ai1i1 = pMtx[ri1 + i1] * idet;
+					pIdx[i] = j;
+					pIdx[i1] = -1;
+					pDet[i] = 1;
+					pDet[i1] = det;
+					for (int k = i2; k < N; ++k) {
+						T u = aii1*pMtx[ri1 + k] - ai1i1*pMtx[ri + k];
+						T v = aii1*pMtx[ri + k] - aii*pMtx[ri1 + k];
+						int rk = k*N;
+						T* pDst = &pMtx[rk + k];
+						T* pSrc = &pMtx[ri + k];
+						for (int m = k; m < N; ++m) {
+							*pDst++ += *pSrc++ * u;
+						}
+						pDst = &pMtx[rk + k];
+						pSrc = &pMtx[ri1 + k];
+						for (int m = k; m < N; ++m) {
+							*pDst++ += *pSrc++ * v;
+						}
+						pMtx[ri + k] = u;
+						pMtx[ri1 + k] = v;
+					}
+					i = i2;
+					++eposi;
+					++enega;
+					flg = false;
+				}
+			}
+		}
+		if (flg) {
+			aii = pMtx[ri + i];
+			if (aii < 0) aii = -aii;
+			if (aii > zthr) {
+				aii = pMtx[ri + i];
+				if (aii > 0) {
+					++eposi;
+				} else {
+					++enega;
+				}
+				pDet[i] = aii;
+			}
+			T s = -T(1) / aii;
+			for (int k = i1; k < N; ++k) {
+				int rk = k*N;
+				T t = pMtx[ri + k] * s;
+				T* pDst = &pMtx[rk + k];
+				T* pSrc = &pMtx[ri + k];
+				for (int m = k; m < N; ++m) {
+					*pDst++ += *pSrc++ * t;
+				}
+				pMtx[ri + k] = t;
+			}
+			i = i1;
+		}
+	}
+	if (i == N - 1) {
+		int ri = i*N;
+		T aii = pMtx[ri + i];
+		if (aii < 0) aii = -aii;
+		if (aii > zthr) {
+			aii = pMtx[ri + i];
+			if (aii > 0) {
+				++eposi;
+			} else {
+				++enega;
+			}
+		}
+		pDet[i] = pMtx[i*N + i];
+	}
+	return (eposi + enega) == N;
+}
+
+template<typename T>
+inline
+void symm_ldlt_solve(T* pAns, const T* pMtx, const T* pRHS, const T* pDet /* [N] */, const int* pIdx /* [N] */, int N) {
+	if (pAns != pRHS) {
+		for (int i = 0; i < N; ++i) {
+			pAns[i] = pRHS[i];
+		}
+	}
+	int i = 0;
+	while (i < N - 1) {
+		int ri = i*N;
+		int idx = pIdx[i];
+		T tp = pAns[idx];
+		if (pIdx[i + 1] >= 0) {
+			pAns[idx] = pAns[i];
+			pAns[i] = tp / pMtx[ri + i];
+			for (int j = i + 1; j < N; ++j) {
+				pAns[j] += pMtx[ri + j] * tp;
+			}
+			i = i + 1;
+		} else {
+			int i1 = i + 1;
+			int ri1 = i1*N;
+			T t = pAns[i];
+			pAns[idx] = pAns[i1];
+			T idet = T(1) / pDet[i1];
+			pAns[i] = (pMtx[ri1 + i1]*t - pMtx[ri + i1]*tp) * idet;
+			pAns[i1] = (pMtx[ri + i]*tp - pMtx[ri + i1]*t) * idet;
+			for (int j = i + 2; j < N; ++j) {
+				pAns[j] += pMtx[ri + j] * t;
+			}
+			for (int j = i + 2; j < N; ++j) {
+				pAns[j] += pMtx[ri1 + j] * tp;
+			}
+			i = i + 2;
+		}
+	}
+	if (i == N - 1) {
+		pAns[i] /= pMtx[i*N + i];
+		i = N - 2;
+	} else {
+		i = N - 3;
+	}
+	while (i >= 0) {
+		int ii = pIdx[i] >= 0 ? i : i - 1;
+		for (int j = ii; j <= i; ++j) {
+			int rj = j*N;
+			T s = pAns[j];
+			for (int k = i + 1; k < N; ++k) {
+				s += pMtx[rj + k] * pAns[k];
+			}
+			pAns[j] = s;
+		}
+		int idx = pIdx[ii];
+		T t = pAns[i];
+		pAns[i] = pAns[idx];
+		pAns[idx] = t;
+		i = ii - 1;
+	}
+}
+
 static float frand01() {
 	VAL32 uf;
 	uint32_t r0 = ::rand() & 0xFF;
@@ -180,9 +399,7 @@ static void calc_dist_mtx(float* pWk, const IMG_COORD* pPts, int N) {
 	}
 }
 
-static bool solve(float* pWk, const IMG_COORD* pPts, const RGBA* pSmps, int N) {
-	calc_dist_mtx(pWk, pPts, N);
-
+static bool solve_lu(float* pWk, const IMG_COORD* pPts, const RGBA* pSmps, int N) {
 	float* pMtx = pWk;
 	float* pWgt = pWk + (N*N);
 	float* pWgtR = pWgt;
@@ -196,12 +413,46 @@ static bool solve(float* pWk, const IMG_COORD* pPts, const RGBA* pSmps, int N) {
 	/* Mtx * wgt<RGB> = smp<RGB> */
 	float* dsts[] = { pWgtR, pWgtG, pWgtB };
 	for (int i = 0; i < 3; ++i) {
+		float* pDst = dsts[i];
 		for (int j = 0; j < N; ++j) {
-			pTmp[j] = pSmps[j].ch[i];
+			pDst[j] = pSmps[j].ch[i];
 		}
-		lu_solve(dsts[i], pMtx, pTmp, pIdx, N);
+		lu_solve(pDst, pMtx, pDst, pIdx, N);
 	}
 	return true;
+}
+
+static bool solve_ldlt(float* pWk, const IMG_COORD* pPts, const RGBA* pSmps, int N) {
+	float* pMtx = pWk;
+	float* pWgt = pWk + (N*N);
+	float* pWgtR = pWgt;
+	float* pWgtG = pWgt + N;
+	float* pWgtB = pWgt + N*2;
+	float* pDet = pWgt + N*3;
+	int* pIdx = reinterpret_cast<int*>(pWgt + N*4);
+
+	if (!symm_ldlt_decomp(pMtx, N, pDet, pIdx)) return false;
+
+	float* dsts[] = { pWgtR, pWgtG, pWgtB };
+	for (int i = 0; i < 3; ++i) {
+		float* pDst = dsts[i];
+		for (int j = 0; j < N; ++j) {
+			pDst[j] = pSmps[j].ch[i];
+		}
+		symm_ldlt_solve(pDst, pMtx, pDst, pDet, pIdx, N);
+	}
+	return true;
+}
+
+static bool solve(float* pWk, const IMG_COORD* pPts, const RGBA* pSmps, int N, bool useLDLT = true) {
+	calc_dist_mtx(pWk, pPts, N);
+	bool res = false;
+	if (useLDLT) {
+		res = solve_ldlt(pWk, pPts, pSmps, N);
+	} else {
+		res = solve_lu(pWk, pPts, pSmps, N);
+	}
+	return res;
 }
 
 static void interp(IMAGE* pImg, float* pWk, IMG_COORD* pPts, int N) {

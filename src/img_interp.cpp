@@ -382,7 +382,7 @@ RGBA* get_img_samples(const IMAGE* pImg, const IMG_COORD* pPts, int n) {
 
 static float* alloc_solution(int N) {
 	/* NxN + wgt[N*3] + tmp[N] + idx[N] */
-	int size = N*N * sizeof(float);
+	int64_t size = N*N * sizeof(float);
 	size += N * 3 * sizeof(float);
 	size += N * sizeof(float);
 	size += N * sizeof(int);
